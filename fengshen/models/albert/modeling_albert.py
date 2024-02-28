@@ -873,6 +873,13 @@ class AlbertMLMHead(nn.Module):
 
         return prediction_scores
 
+    def embed(self, hidden_states):
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.activation(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states)
+
+        return hidden_states.sum(axis=1)
+
     def _tie_weights(self):
         # To tie those two weights if they get disconnected (on TPU or when the bias is resized)
         self.bias = self.decoder.bias
@@ -902,6 +909,7 @@ class AlbertForMaskedLM(AlbertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
 
+        # pooler_output shape is (len, 4096)
         self.albert = AlbertModel(config, add_pooling_layer=False)
         self.predictions = AlbertMLMHead(config)
 
@@ -973,6 +981,46 @@ class AlbertForMaskedLM(AlbertPreTrainedModel):
             logits=prediction_scores,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+        )
+
+    def embed(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        token_type_ids=None,
+        position_ids=None,
+        head_mask=None,
+        inputs_embeds=None,
+        labels=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+    ):
+        r"""
+        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
+            Labels for computing the masked language modeling loss. Indices should be in ``[-100, 0, ...,
+            config.vocab_size]`` (see ``input_ids`` docstring) Tokens with indices set to ``-100`` are ignored
+            (masked), the loss is only computed for the tokens with labels in ``[0, ..., config.vocab_size]``
+        """
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        outputs = self.albert(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        sequence_outputs = outputs[0]
+
+        embeddings = self.predictions.embed(sequence_outputs)
+
+        return MaskedLMOutput(
+            logits=embeddings
         )
 
 

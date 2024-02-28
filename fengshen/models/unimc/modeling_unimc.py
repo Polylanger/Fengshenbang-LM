@@ -30,7 +30,7 @@ from transformers.optimization import get_linear_schedule_with_warmup
 from transformers import BertForMaskedLM, AlbertTokenizer
 from transformers import AutoConfig
 from transformers.pipelines.base import Pipeline
-from transformers import MegatronBertForMaskedLM
+from transformers import MegatronBertForMaskedLM, DataCollatorWithPadding
 from fengshen.models.deberta_v2.modeling_deberta_v2 import DebertaV2ForMaskedLM
 from fengshen.models.albert.modeling_albert import AlbertForMaskedLM
 import argparse
@@ -330,6 +330,13 @@ class UniMCModel(nn.Module):
             all_loss = mask_loss+cls_loss
             return all_loss, mlm_logits, cls_logits
 
+    def embed(self, input_ids, attention_mask, token_type_ids, position_ids=None, mlmlabels=None, clslabels=None, clslabels_mask=None, mlmlabels_mask=None):
+        outputs = self.bert.embed(input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            position_ids=position_ids,
+                            token_type_ids=token_type_ids)
+        return outputs.logits
+
 
 class UniMCLitModel(pl.LightningModule):
 
@@ -352,7 +359,7 @@ class UniMCLitModel(pl.LightningModule):
 
     def setup(self, stage) -> None:
         if stage == 'fit':
-            num_gpus = self.trainer.gpus if self.trainer.gpus is not None else 0
+            num_gpus = self.trainer.num_devices if self.trainer.num_devices is not None else 0
             self.total_step = int(self.trainer.max_epochs * self.num_data /
                                   (max(1, num_gpus) * self.trainer.accumulate_grad_batches))
             print('Total training step:', self.total_step)
@@ -401,8 +408,8 @@ class UniMCLitModel(pl.LightningModule):
 
     def comput_metrix(self, logits, labels, mlmlabels_mask):
         logits = torch.nn.functional.softmax(logits, dim=-1)
-        logits = torch.argmax(logits, dim=-1)
-        y_pred = logits.view(size=(-1,))
+        y_pred = torch.argmax(logits, dim=-1)
+        y_pred = y_pred.view(size=(-1,))
         y_true = labels.view(size=(-1,))
         corr = torch.eq(y_pred, y_true).float()
         return torch.sum(corr.float())/labels.size(0)
@@ -414,7 +421,7 @@ class UniMCPredict:
         self.args = args
         self.data_model = UniMCDataModel(
             [], [], yes_token, no_token, tokenizer, args)
-        self.model = model
+        self.model: UniMCLitModel = model
 
     def predict(self, batch_data):
         batch = [self.data_model.train_data.encode(
@@ -445,6 +452,31 @@ class UniMCPredict:
             batch_data[i]['score'] = score
 
         return batch_data
+
+class UniMCEmbed:
+    def __init__(self, yes_token, no_token, model, tokenizer, args):
+        self.tokenizer = tokenizer
+        self.args = args
+        self.data_model = UniMCDataModel(
+            [], [], yes_token, no_token, tokenizer, args)
+        self.model = model
+        self.collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
+
+    def embed(self, batch_data):
+        # Encode each sample in batch_data
+        batch = self.tokenizer(batch_data, 
+                               max_length=self.args.max_length, 
+                               padding='max_length', 
+                               truncation='longest_first')
+        batch = self.collator(batch)
+        batch['attention_mask'] = batch['attention_mask'].unsqueeze(1).repeat((1, 512, 1))
+        # Move all data in batch to GPU if available
+        batch = {k: v.cuda() for k, v in batch.items()}
+        # Use the model to predict logits
+        logits = self.model.model.embed(**batch)
+        # Return the logits
+        logits = logits.detach().cpu().numpy()
+        return logits
 
 
 class UniMCPipelines(Pipeline):

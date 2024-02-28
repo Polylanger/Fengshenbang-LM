@@ -35,6 +35,7 @@ from fengshen.models.unimc.modeling_unimc import (
     UniMCDataModel,
     UniMCLitModel,
     UniMCPredict,
+    UniMCEmbed
 )
 
 
@@ -106,13 +107,32 @@ class UniMCPipelines(Pipeline):
         self.model.model.eval()
         predict_model = UniMCPredict(
             self.yes_token, self.no_token, self.model, self.tokenizer, self.args)
+        t = tqdm(total=len(test_data))
         while start < len(test_data):
             batch_data = test_data[start:start+self.args.batchsize]
             start += self.args.batchsize
             batch_result = predict_model.predict(batch_data)
             result.extend(batch_result)
+            t.update(self.args.batchsize)
         if process:
             result = self.postprocess(result)
+        return result
+
+    def embed(self, test_data, cuda=True, process=True):
+        result = []
+        start = 0
+        if cuda:
+            self.model = self.model.cuda()
+        self.model.model.eval()
+        embed_model = UniMCEmbed(
+            self.yes_token, self.no_token, self.model, self.tokenizer, self.args)
+        t = tqdm(total=len(test_data))
+        while start < len(test_data):
+            batch_data = test_data[start:start+self.args.batchsize]
+            start += self.args.batchsize
+            batch_result = embed_model.embed(batch_data)
+            result.extend(batch_result)
+            t.update(self.args.batchsize)
         return result
 
     def preprocess(self, data):

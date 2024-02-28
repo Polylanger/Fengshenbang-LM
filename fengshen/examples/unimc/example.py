@@ -8,7 +8,7 @@ def main():
 
     args = total_parser.parse_args()
 
-    pretrained_model_path = 'IDEA-CCNL/Erlangshen-UniMC-RoBERTa-110M-Chinese'
+    pretrained_model_path = 'IDEA-CCNL/Erlangshen-UniMC-Albert-235M-English'
     args.learning_rate = 2e-5
     args.max_length = 512
     args.max_epochs = 3
